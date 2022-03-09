@@ -304,7 +304,7 @@ CSG.meshIntersect = function(obj1, obj2, checkBounds = CSG.checkBounds) {
     return CSG.toMesh(bspA, obj1.matrix, obj1.material);
 }
 
-CSG.computeBoundingBox = function(polygons) {
+CSG.computeBoundingBox = function(box, polygons) {
     box.makeEmpty();
     for (let i = 0; i < polygons.length; i++) {
         let vertices = polygons[i].vertices;
