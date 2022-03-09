@@ -64,7 +64,7 @@ class CSG {
         b.invert();
         a.build(b.allPolygons());
         a.invert();
-        return CSG.fromPolygons(checkBounds ? [...a.allPolygons(), ...this.leftOverPolygons, ...csg.leftOverPolygons] : a.allPolygons());
+        return CSG.fromPolygons(checkBounds ? [...a.allPolygons(), ...this.leftOverPolygons] : a.allPolygons());
     }
 
     intersect(csg, checkBounds = CSG.checkBounds) {
@@ -85,7 +85,7 @@ class CSG {
         b.clipTo(a);
         a.build(b.allPolygons());
         a.invert();
-        return CSG.fromPolygons(checkBounds ? [...a.allPolygons(), ...this.leftOverPolygons, ...csg.leftOverPolygons] : a.allPolygons());
+        return CSG.fromPolygons(a.allPolygons());
     }
 
     // Return a new CSG solid with solid and empty space switched. This solid is
