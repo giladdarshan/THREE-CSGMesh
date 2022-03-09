@@ -27,6 +27,7 @@ CSG.fromGeometry = function(geom,objectIndex) {
         let normalattr = geom.attributes.normal
         let uvattr = geom.attributes.uv
         let colorattr = geom.attributes.color
+        let groups = geom.groups;
         let index;
         if (geom.index)
             index = geom.index.array;
@@ -66,11 +67,20 @@ CSG.fromGeometry = function(geom,objectIndex) {
                     z: 0
                 },colorattr&&{x:colorattr.array[vt],y:colorattr.array[vt+1],z:colorattr.array[vt+2]});
             }
-            polys[pli] = new Polygon(vertices,objectIndex)
+            if ((objectIndex === undefined) && groups && groups.length > 0) {
+                for (let group of groups) {
+                    if ((index[i] >= group.start) && (index[i] < (group.start + group.count))) {
+                        polys[pli] = new Polygon(vertices, group.materialIndex);
+                    }
+                }
+            }
+            else {
+                polys[pli] = new Polygon(vertices,objectIndex)
+            }
         }
     } else
         console.error("Unsupported CSG input type:" + geom.type)
-    return CSG.fromPolygons(polys)
+    return CSG.fromPolygons(polys.filter(p=>!isNaN(p.plane.normal.x)));
 }
 
 let ttvv0 = new THREE.Vector3()
@@ -154,6 +164,7 @@ CSG.toGeometry = function(csg, buffered=true) {
         let uvs; // = nbuf2(triCount * 2 * 3)
         let colors;
         let grps=[]
+        let dgrp = [];
         ps.forEach(p=>{
             let pvs = p.vertices
             let pvlen = pvs.length
@@ -169,7 +180,7 @@ CSG.toGeometry = function(csg, buffered=true) {
                 }
             }
             for (let j = 3; j <= pvlen; j++) {
-                (p.shared!==undefined) && (grps[p.shared].push(vertices.top/3,(vertices.top/3)+1,(vertices.top/3)+2));
+                (p.shared === undefined ? dgrp : grps[p.shared]).push(vertices.top/3,(vertices.top/3)+1,(vertices.top/3)+2);
                 vertices.write(pvs[0].pos)
                 vertices.write(pvs[j-2].pos)
                 vertices.write(pvs[j-1].pos)
@@ -185,6 +196,11 @@ CSG.toGeometry = function(csg, buffered=true) {
         geom.setAttribute('normal', new THREE.BufferAttribute(normals.array,3));
         uvs && geom.setAttribute('uv', new THREE.BufferAttribute(uvs.array,2));
         colors && geom.setAttribute('color', new THREE.BufferAttribute(colors.array,3));
+        for (let i = 0; i < grps.length; i++) {
+            if (grps[i] === undefined) {
+                grps[i] = [];
+            }
+        }
         if(grps.length){
             let index = []
             let gbase=0;
@@ -192,6 +208,10 @@ CSG.toGeometry = function(csg, buffered=true) {
                 geom.addGroup(gbase,grps[gi].length,gi)
                 gbase+=grps[gi].length
                 index=index.concat(grps[gi]);
+            }
+            if (dgrp.length) {
+                geom.addGroup(gbase, dgrp.length, grps.length);
+                index = index.concat(dgrp);
             }
             geom.setIndex(index)
         }
@@ -213,6 +233,86 @@ CSG.toMesh = function(csg, toMatrix, toMaterial) {
     m.updateMatrixWorld();
     m.castShadow = m.receiveShadow = true;
     return m
+}
+
+CSG.meshUnion = function(obj1, obj2, checkBounds = CSG.checkBounds) {
+    obj1.updateMatrix();
+    let bspA = CSG.fromMesh(obj1);
+    checkBounds && bspA.boundingBox.setFromObject(obj1) && bspA.boundingBox.expandByScalar(1e-5);
+    if (!Array.isArray(obj2)) {
+        obj2.updateMatrix();
+        let bspB = CSG.fromMesh(obj2);
+        checkBounds && bspB.boundingBox.setFromObject(obj2) && bspB.boundingBox.expandByScalar(1e-5);
+        bspA = bspA.union(bspB, checkBounds);
+    }
+    else {
+        for (let i = 0; i < obj2.length; i++) {
+            obj2[i].updateMatrix();
+            let bspB = CSG.fromMesh(obj2[i]);
+            checkBounds && bspB.boundingBox.setFromObject(obj2[i]) && bspB.boundingBox.expandByScalar(1e-5);
+            bspA = bspA.union(bspB, checkBounds);
+            checkBounds && CSG.computeBoundingBox(bspA.boundingBox, bspA.polygons) && bspA.boundingBox.expandByScalar(1e-5);
+        }
+    }
+
+    return CSG.toMesh(bspA, obj1.matrix, obj1.material);
+}
+
+CSG.meshSubtract = function(obj1, obj2, checkBounds = CSG.checkBounds) {
+    obj1.updateMatrix();
+    let bspA = CSG.fromMesh(obj1);
+    checkBounds && bspA.boundingBox.setFromObject(obj1) && bspA.boundingBox.expandByScalar(1e-5);
+    if (!Array.isArray(obj2)) {
+        obj2.updateMatrix();
+        let bspB = CSG.fromMesh(obj2);
+        checkBounds && bspB.boundingBox.setFromObject(obj2) && bspB.boundingBox.expandByScalar(1e-5);
+        bspA = bspA.subtract(bspB, checkBounds);
+    }
+    else {
+        for (let i = 0; i < obj2.length; i++) {
+            obj2[i].updateMatrix();
+            let bspB = CSG.fromMesh(obj2[i]);
+            checkBounds && bspB.boundingBox.setFromObject(obj2[i]) && bspB.boundingBox.expandByScalar(1e-5);
+            bspA = bspA.subtract(bspB, checkBounds);
+            checkBounds && CSG.computeBoundingBox(bspA.boundingBox, bspA.polygons) && bspA.boundingBox.expandByScalar(1e-5);
+        }
+    }
+
+    return CSG.toMesh(bspA, obj1.matrix, obj1.material);
+}
+
+CSG.meshIntersect = function(obj1, obj2, checkBounds = CSG.checkBounds) {
+    obj1.updateMatrix();
+    let bspA = CSG.fromMesh(obj1);
+    checkBounds && bspA.boundingBox.setFromObject(obj1) && bspA.boundingBox.expandByScalar(1e-5);
+    if (!Array.isArray(obj2)) {
+        obj2.updateMatrix();
+        let bspB = CSG.fromMesh(obj2);
+        checkBounds && bspB.boundingBox.setFromObject(obj2) && bspB.boundingBox.expandByScalar(1e-5);
+        bspA = bspA.intersect(bspB, checkBounds);
+    }
+    else {
+        for (let i = 0; i < obj2.length; i++) {
+            obj2[i].updateMatrix();
+            let bspB = CSG.fromMesh(obj2[i]);
+            checkBounds && bspB.boundingBox.setFromObject(obj2[i]) && bspB.boundingBox.expandByScalar(1e-5);
+            bspA = bspA.intersect(bspB, checkBounds);
+            checkBounds && CSG.computeBoundingBox(bspA.boundingBox, bspA.polygons) && bspA.boundingBox.expandByScalar(1e-5);
+        }
+    }
+
+    return CSG.toMesh(bspA, obj1.matrix, obj1.material);
+}
+
+CSG.computeBoundingBox = function(polygons) {
+    box.makeEmpty();
+    for (let i = 0; i < polygons.length; i++) {
+        let vertices = polygons[i].vertices;
+        for (let j = 0; j < vertices.length; j++) {
+            box.expandByPoint(vertices[j].pos);
+        }
+    }
+    return box;
 }
 
 import "./csg-worker.js"

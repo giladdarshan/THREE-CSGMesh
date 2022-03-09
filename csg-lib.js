@@ -12,6 +12,8 @@
 class CSG {
     constructor() {
         this.polygons = [];
+        this.leftOverPolygons = [];
+        this.boundingBox = new THREE.Box3();
     }
     clone() {
         let csg = new CSG();
@@ -23,7 +25,15 @@ class CSG {
         return this.polygons;
     }
 
-    union(csg) {
+    union(csg, checkBounds = CSG.checkBounds) {
+        if (checkBounds) {
+            if (!csg.boundingBox.isEmpty()) {
+                this.reducePolygons(csg.boundingBox);
+            }
+            if (!this.boundingBox.isEmpty()) {
+                csg.reducePolygons(this.boundingBox);
+            }
+        }
         let a = new Node(this.clone().polygons);
         let b = new Node(csg.clone().polygons);
         a.clipTo(b);
@@ -32,10 +42,18 @@ class CSG {
         b.clipTo(a);
         b.invert();
         a.build(b.allPolygons());
-        return CSG.fromPolygons(a.allPolygons());
+        return CSG.fromPolygons(checkBounds ? [...a.allPolygons(), ...this.leftOverPolygons, ...csg.leftOverPolygons] : a.allPolygons());
     }
 
-    subtract(csg) {
+    subtract(csg, checkBounds = CSG.checkBounds) {
+        if (checkBounds) {
+            if (!csg.boundingBox.isEmpty()) {
+                this.reducePolygons(csg.boundingBox);
+            }
+            if (!this.boundingBox.isEmpty()) {
+                csg.reducePolygons(this.boundingBox);
+            }
+        }
         let a = new Node(this.clone().polygons);
         let b = new Node(csg.clone().polygons);
         a.invert();
@@ -46,10 +64,18 @@ class CSG {
         b.invert();
         a.build(b.allPolygons());
         a.invert();
-        return CSG.fromPolygons(a.allPolygons());
+        return CSG.fromPolygons(checkBounds ? [...a.allPolygons(), ...this.leftOverPolygons, ...csg.leftOverPolygons] : a.allPolygons());
     }
 
-    intersect(csg) {
+    intersect(csg, checkBounds = CSG.checkBounds) {
+        if (checkBounds) {
+            if (!csg.boundingBox.isEmpty()) {
+                this.reducePolygons(csg.boundingBox);
+            }
+            if (!this.boundingBox.isEmpty()) {
+                csg.reducePolygons(this.boundingBox);
+            }
+        }
         let a = new Node(this.clone().polygons);
         let b = new Node(csg.clone().polygons);
         a.invert();
@@ -59,7 +85,7 @@ class CSG {
         b.clipTo(a);
         a.build(b.allPolygons());
         a.invert();
-        return CSG.fromPolygons(a.allPolygons());
+        return CSG.fromPolygons(checkBounds ? [...a.allPolygons(), ...this.leftOverPolygons, ...csg.leftOverPolygons] : a.allPolygons());
     }
 
     // Return a new CSG solid with solid and empty space switched. This solid is
@@ -69,6 +95,39 @@ class CSG {
         csg.polygons.forEach(p=>p.flip());
         return csg;
     }
+
+    reducePolygons(boundingBox) {
+        let newPolyArr = [];
+        let usedPoly = {};
+        for (let i = 0; i < this.polygons.length; i++) {
+            if (usedPoly[i] && usedPoly[i] === true) {
+                continue;
+            }
+            usedPoly[i] = false;
+            let triangle = new THREE.Triangle(this.polygons[i].vertices[0].pos, this.polygons[i].vertices[1].pos, this.polygons[i].vertices[2].pos);
+            // if (!Array.isArray(boundingBox)) {
+                if (boundingBox.intersectsTriangle(triangle)) {
+                    newPolyArr.push(this.polygons[i]);
+                }
+                else {
+                    this.leftOverPolygons.push(this.polygons[i]);
+                }
+            // }
+            // else {
+            //     for (let j = 0; j < boundingBox.length; j++) {
+            //         if (boundingBox[j].intersectsTriangle(triangle)) {
+            //             newPolyArr.push(this.polygons[i]);
+            //             usedPoly[i] = true;
+            //             break;
+            //         }
+            //     }
+            //     if (usedPoly[i] === false) {
+            //         this.leftOverPolygons.push(this.polygons[i]);
+            //     }
+            // }
+        }
+        this.polygons = newPolyArr.slice();
+    }
 }
 
 // Construct a CSG solid from a list of `Polygon` instances.
@@ -77,6 +136,8 @@ CSG.fromPolygons=function(polygons) {
     csg.polygons = polygons;
     return csg;
 }
+
+CSG.checkBounds = false;
 
 // # class Vector
 
@@ -158,6 +219,12 @@ class Vector {
     }
     dot(b){
         return (this.x*b.x)+(this.y*b.y)+(this.z*b.z)
+    }
+    equals(b) {
+        return ((this.x === b.x) && (this.y === b.y) && (this.z === b.z));
+    }
+    empty() {
+        return this.copy(new Vector());
     }
 }
 
@@ -275,12 +342,47 @@ class Plane {
                     b.push(v.clone());
                 }
             }
-            if (f.length >= 3)
-                front.push(new Polygon(f,polygon.shared));
-            if (b.length >= 3)
-                back.push(new Polygon(b,polygon.shared));
+            if (f.length >= 3) {
+                if (f.length > 3) {
+                    let newPolys = this.split(f);
+                    for (let npI = 0; npI < newPolys.length; npI++) {
+                        front.push(new Polygon(newPolys[npI],polygon.shared));
+                    }
+                }
+                else {
+                    front.push(new Polygon(f,polygon.shared));
+                }
+            }
+            if (b.length >= 3) {
+                if (b.length > 3) {
+                    let newPolys = this.split(b);
+                    for (let npI = 0; npI < newPolys.length; npI++) {
+                        back.push(new Polygon(newPolys[npI],polygon.shared));
+                    }
+                }
+                else {
+                    back.push(new Polygon(b,polygon.shared));
+                }
+            }
             break;
         }
+    }
+    split(arr) {
+        let resultArr = [];
+        for (let j = 3; j <= arr.length; j++) {
+            let result = [];
+            result.push(arr[0].clone());
+            result.push(arr[j-2].clone());
+            result.push(arr[j-1].clone());
+            resultArr.push(result);
+        }
+        return resultArr;
+    }
+    equals(p) {
+        if (this.normal.equals(p.normal) && this.w === p.w) {
+            return true;
+        }
+        return false;
     }
 
 }
@@ -404,26 +506,101 @@ class Node {
     // new polygons are filtered down to the bottom of the tree and become new
     // nodes there. Each set of polygons is partitioned using the first polygon
     // (no heuristic is used to pick a good split).
-    build(polygons) {
+    build(polygons, parent) {
         if (!polygons.length)
             return;
+        this.polygons.push(polygons[0]);
         if (!this.plane)
             this.plane = polygons[0].plane.clone();
         let front = []
           , back = [];
-        for (let i = 0; i < polygons.length; i++) {
+        for (let i = 1; i < polygons.length; i++) {
             this.plane.splitPolygon(polygons[i], this.polygons, this.polygons, front, back);
         }
         if (front.length) {
             if (!this.front)
                 this.front = new Node();
-            this.front.build(front);
+            
+            if ((polygons.length === front.length) && (back.length === 0)) {
+                this.frontArr = front;
+                if (parent) {
+                    if (this.polygonArrRepeating(parent.frontArr, front)) {
+                        this.front.polygons = front;
+                        console.error("Front polygons looping during node build, stopping to prevent recursion errors");
+                    }
+                    else {
+                        this.front.build(front, this);
+                    }
+                }
+                else {
+                    this.front.build(front, this);
+                }
+                
+            }
+            else {
+                this.front.build(front);
+            }
         }
         if (back.length) {
             if (!this.back)
                 this.back = new Node();
-            this.back.build(back);
+            
+            if ((polygons.length === back.length) && (front.length === 0)) {
+                this.backArr = back;
+                if (parent) {
+                    if (this.polygonArrRepeating(parent.backArr, back)) {
+                        this.back.polygons = back;
+                        console.error("Back polygons looping during node build, stopping to prevent recursion errors");
+                    }
+                    else {
+                        this.back.build(back, this);
+                    }
+                }
+                else {
+                    this.back.build(back, this);
+                }
+                
+            }
+            else {
+                this.back.build(back);
+            }
         }
+    }
+
+    polygonArrRepeating(parentPolygons, polygons) {
+        if (polygons.length !== parentPolygons.length) {
+            return false;
+        }
+        let repeating = false;
+        for (let i = 0; i < polygons.length; i++) {
+            if (polygons[i].vertices.length !== parentPolygons[i].vertices.length) {
+                return false;
+            }
+            if (!polygons[i].plane.equals(parentPolygons[i].plane)) {
+                return false;
+            }
+            for (let j = 0; j < polygons[i].vertices.length; j++ ) {
+                let childVertex = polygons[i].vertices[j];
+                let parentVertex = parentPolygons[i].vertices[j];
+                if (!childVertex.pos.equals(parentVertex.pos) || !childVertex.normal.equals(parentVertex.normal)) {
+                    return false;
+                }
+                if (childVertex.uv && parentVertex.uv) {
+                    if (childVertex.uv.equals(parentVertex.uv)) {
+                        repeating = true;
+                    }
+                    else {
+                        return false;
+                    }
+                }
+                else {
+                    repeating = true;
+                }
+            }
+        }
+
+        return repeating;
+
     }
 }
 
