@@ -523,7 +523,7 @@ class Node {
             
             if ((polygons.length === front.length) && (back.length === 0)) {
                 this.frontArr = front;
-                if (parent) {
+                if (parent && parent.frontArr) {
                     if (this.polygonArrRepeating(parent.frontArr, front)) {
                         this.front.polygons = front;
                         console.error("Front polygons looping during node build, stopping to prevent recursion errors");
@@ -547,7 +547,7 @@ class Node {
             
             if ((polygons.length === back.length) && (front.length === 0)) {
                 this.backArr = back;
-                if (parent) {
+                if (parent && parent.backArr) {
                     if (this.polygonArrRepeating(parent.backArr, back)) {
                         this.back.polygons = back;
                         console.error("Back polygons looping during node build, stopping to prevent recursion errors");
